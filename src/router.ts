@@ -200,10 +200,8 @@ class AppRouter {
 			const filesPath = process.env.FILES_DIRECTORY!;
 			const tempDir = join(filesPath, "/temp", Date.now().toString());
 
-
 			mkdirSync(tempDir, { recursive: true });
 			mkdirSync(join(tempDir, "arquivos"), { recursive: true });
-
 
 			const archive = archiver("zip", {
 				zlib: { level: 1 },
@@ -231,16 +229,12 @@ class AppRouter {
 			res.setHeader("Content-Disposition", `attachment; filename=${Date.now()}.zip`);
 
 			res.on("finish", () => {
-				setTimeout(() => {
-					fs.rm(tempDir, { recursive: true, force: true }, (err) => {
-						if (err) {
-							logWithDate("Error deleting temp dir", err);
-						}
-					});
-				}, 10000);
+				fs.rm(tempDir, { recursive: true, force: true }, (err) => {
+					if (err) {
+						logWithDate("Error deleting temp dir", err);
+					}
+				});
 			});
-
-
 		} catch (err) {
 			logWithDate("Get file failure =>", err);
 			res.status(500).json({ message: "Something went wrong" });
@@ -342,16 +336,17 @@ class AppRouter {
 
 				const parsedMessage = file
 					? await instance.sendFile({
-						caption: replaceVars(text, contactVars),
-						contact,
-						file: file.buffer,
-						fileName: fileName || file.originalname,
-						mimeType: file.mimetype,
-					})
+							caption: replaceVars(text, contactVars),
+							contact,
+							file: file.buffer,
+							fileName: fileName || file.originalname,
+							mimeType: file.mimetype,
+					  })
 					: await instance.sendText(contact, replaceVars(text, contactVars));
 
 				await axios.post(
-					`${instance.requestURL.replace("/wwebjs", "")}/custom-routes/receive_mm/${instance.whatsappNumber
+					`${instance.requestURL.replace("/wwebjs", "")}/custom-routes/receive_mm/${
+						instance.whatsappNumber
 					}/${contact}`,
 					parsedMessage
 				);
@@ -376,16 +371,17 @@ class AppRouter {
 
 				const parsedMessage = file
 					? await instance.sendFile({
-						caption: replaceVars(text, contactVars),
-						contact,
-						file: file.buffer,
-						fileName: file.name,
-						mimeType: file.mimetype,
-					})
+							caption: replaceVars(text, contactVars),
+							contact,
+							file: file.buffer,
+							fileName: file.name,
+							mimeType: file.mimetype,
+					  })
 					: await instance.sendText(contact, replaceVars(text, contactVars));
 
 				await axios.post(
-					`${instance.requestURL.replace("/wwebjs", "")}/custom-routes/receive_mm/${instance.whatsappNumber
+					`${instance.requestURL.replace("/wwebjs", "")}/custom-routes/receive_mm/${
+						instance.whatsappNumber
 					}/${contact}`,
 					parsedMessage
 				);
