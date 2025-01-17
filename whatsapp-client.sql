@@ -7,8 +7,8 @@
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 /*!40111 SET @OLD_SQL_NOTES=@@SQL_NOTES, SQL_NOTES=0 */;
 
-CREATE DATABASE IF NOT EXISTS `whatsapp-client` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_unicode_ci */;
-USE `whatsapp-client`;
+CREATE DATABASE IF NOT EXISTS `giovanni_dev_whatsapp-client` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_unicode_ci */;
+USE `giovanni_dev_whatsapp-client`;
 
 CREATE TABLE IF NOT EXISTS `automatic_messages` (
   `id` int(11) NOT NULL AUTO_INCREMENT,

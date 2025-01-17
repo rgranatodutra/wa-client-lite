@@ -1,28 +1,23 @@
 {
-  "compilerOptions": {
-    "module": "commonjs",
-    "declaration": true,
-    "removeComments": true,
-    "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
-    "incremental": true,
-    "strictBindCallApply": true,
-    "sourceMap": true,
-    "strictNullChecks": false,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "target": "es2021",
-    "outDir": "./dist",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "typeRoots": [
-      "./node_modules/@types",
-      "./types"
-    ]
-  },
-  "include": [
-    "src",
-    "node_modules"
-  ]
+	"compilerOptions": {
+		"noImplicitAny": false,
+		"module": "commonjs",
+		"declaration": true,
+		"removeComments": true,
+		"experimentalDecorators": true,
+		"emitDecoratorMetadata": true,
+		"incremental": true,
+		"strictBindCallApply": true,
+		"sourceMap": true,
+		"strictNullChecks": false,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"target": "es2021",
+		"outDir": "./dist",
+		"strict": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"typeRoots": ["./node_modules/@types", "./types"]
+	},
+	"include": ["src", "node_modules"]
 }

@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import axios from "axios";
 import { config } from "dotenv";
 import { loadContacts } from "./functions/loadContacts";
-
+import archiver from "archiver";
 config();
 
 class AppRouter {
@@ -25,22 +25,12 @@ class AppRouter {
 		this.router.get("/clients/:from/load-avatars", this.loadAvatars);
 		this.router.get("/clients/:from/load-contacts", this.loadContacts);
 		this.router.get("/clients/:from/groups", this.loadGroups);
-		this.router.get(
-			"/clients/:from/validate-number/:to",
-			this.validateNumber
-		);
-		this.router.post(
-			"/clients/:from/messages/:to",
-			upload.single("file"),
-			this.sendMessage
-		);
-		this.router.post(
-			"/clients/:from/mass-messages",
-			upload.single("file"),
-			this.sendMassMessages
-		);
+		this.router.get("/clients/:from/validate-number/:to", this.validateNumber);
+		this.router.post("/clients/:from/messages/:to", upload.single("file"), this.sendMessage);
+		this.router.post("/clients/:from/mass-messages", upload.single("file"), this.sendMassMessages);
 		this.router.get("/files/:filename", this.getFile);
 		this.router.post("/files", upload.single("file"), this.uploadFile);
+		this.router.post("/files/getMultipleFiles", upload.single("pdf"), this.getMultipleFiles);
 	}
 
 	async loadMessages(req: Request, res: Response) {
@@ -112,9 +102,7 @@ class AppRouter {
 			const instance = instances.find(from);
 
 			if (!instance) {
-				return res
-					.status(404)
-					.json({ message: "Whatsapp number isn't found " });
+				return res.status(404).json({ message: "Whatsapp number isn't found " });
 			}
 
 			const { text, referenceId, filename, isAudio } = req.body;
@@ -137,10 +125,7 @@ class AppRouter {
 				const localfile = readFileSync(filePath);
 				const mimeType = mime.getType(filePath);
 
-				const fileNameWithoutUUID = filename
-					.split("_")
-					.slice(1)
-					.join("_");
+				const fileNameWithoutUUID = filename.split("_").slice(1).join("_");
 
 				const sentMessageWithFile = await instance.sendFile({
 					file: localfile,
@@ -152,11 +137,7 @@ class AppRouter {
 
 				res.status(201).json(sentMessageWithFile);
 			} else {
-				const sentMessage = await instance.sendText(
-					to,
-					text,
-					referenceId
-				);
+				const sentMessage = await instance.sendText(to, text, referenceId);
 
 				res.status(201).json(sentMessage);
 			}
@@ -172,9 +153,7 @@ class AppRouter {
 			const instance = instances.find(from);
 
 			if (!instance) {
-				return res
-					.status(404)
-					.json({ message: "Whatsapp number isn't found " });
+				return res.status(404).json({ message: "Whatsapp number isn't found " });
 			}
 
 			const pfpURL = await instance.getProfilePicture(to);
@@ -197,20 +176,78 @@ class AppRouter {
 			const mimeType = mime.getType(searchFilePath);
 			const file = readFileSync(searchFilePath);
 			const haveUUID = isUUID(fileName.split("_")[0]);
-			const fileNameWithoutUUID = haveUUID
-				? fileName.split("_").slice(1).join("_")
-				: fileName;
+			const fileNameWithoutUUID = haveUUID ? fileName.split("_").slice(1).join("_") : fileName;
 
-			res.setHeader(
-				"Content-Disposition",
-				`inline; filename="${fileNameWithoutUUID}"`
-			);
+			res.setHeader("Content-Disposition", `inline; filename="${fileNameWithoutUUID}"`);
 			mimeType && res.setHeader("Content-Type", mimeType);
 			res.end(file);
 
 			logWithDate("Get file success =>", fileName);
 		} catch (err) {
 			// Log and send error response
+			logWithDate("Get file failure =>", err);
+			res.status(500).json({ message: "Something went wrong" });
+		}
+	}
+
+	async getMultipleFiles(req: Request, res: Response) {
+		try {
+			const pdfFile = req.file;
+
+			const filesPath = process.env.FILES_DIRECTORY!;
+			const archive = archiver("zip", {
+				zlib: { level: 1 },
+			});
+
+			res.setHeader("Content-Disposition", 'attachment; filename="files.zip"');
+			res.setHeader("Content-Type", "application/zip");
+
+			archive.append(pdfFile.buffer, { name: pdfFile.originalname });
+
+			archive.on("error", (err: any) => {
+				logWithDate("Archive error =>", err);
+				throw err;
+			});
+
+			archive.on("entry", (entry) => {
+				logWithDate("Archive entry added =>", entry.name);
+			});
+
+			archive.on("progress", (data) => {
+				logWithDate("Archive progress =>", data);
+				if (data.entries.processed == req.body.files.length + 1) {
+					archive.end();
+				}
+			});
+
+			archive.on("end", () => {
+				//log data
+				logWithDate("Archive end");
+			});
+
+			res.on("end", () => {
+				console.log(archive.pointer() + " total bytes");
+				console.log("archiver has been finalized and the output file descriptor has closed.");
+			});
+
+			archive.pipe(res);
+
+			for (const fileName of req.body.files) {
+				const searchFilePath = join(filesPath, "/media", fileName);
+
+				if (!existsSync(searchFilePath)) {
+					return res.status(404).json({ message: "File not found" });
+				}
+				console.log(fileName);
+
+				const haveUUID = isUUID(fileName.split("_")[0]);
+				const fileNameWithoutUUID = haveUUID ? fileName.split("_").slice(1).join("_") : fileName;
+				//const file = readFileSync(searchFilePath);
+
+				//archive.append(file, { name: fileNameWithoutUUID });
+				archive.file(searchFilePath, { name: fileNameWithoutUUID });
+			}
+		} catch (err) {
 			logWithDate("Get file failure =>", err);
 			res.status(500).json({ message: "Something went wrong" });
 		}
@@ -225,9 +262,7 @@ class AppRouter {
 			const clientsStatus = [];
 
 			for (const instance of instances.instances) {
-				const status = await instance.client
-					.getState()
-					.catch(() => undefined);
+				const status = await instance.client.getState().catch(() => undefined);
 				const instanceData = {
 					client: instance.clientName,
 					number: instance.whatsappNumber,
@@ -255,9 +290,7 @@ class AppRouter {
 			}
 
 			const uuid = randomUUID();
-			const filename = decodeURIComponent(req.file.originalname).split(
-				"."
-			)[0];
+			const filename = decodeURIComponent(req.file.originalname).split(".")[0];
 			const ext = decodeURIComponent(req.file.originalname).split(".")[1];
 			const generatedName = `${uuid}_${filename}.${ext}`;
 
@@ -297,28 +330,16 @@ class AppRouter {
 				contato_nome_completo: string;
 			}
 		) => {
-			message = message.replaceAll(
-				`@saudação_tempo`,
-				vars.saudação_tempo
-			);
+			message = message.replaceAll(`@saudação_tempo`, vars.saudação_tempo);
 			message = message.replaceAll(`@cliente_razao`, vars.cliente_razao);
 			message = message.replaceAll(`@cliente_cnpj`, vars.cliente_cnpj);
-			message = message.replaceAll(
-				`@contato_primeiro_nome`,
-				vars.contato_primeiro_nome
-			);
-			message = message.replaceAll(
-				`@contato_nome_completo`,
-				vars.contato_nome_completo
-			);
+			message = message.replaceAll(`@contato_primeiro_nome`, vars.contato_primeiro_nome);
+			message = message.replaceAll(`@contato_nome_completo`, vars.contato_nome_completo);
 
 			return message;
 		};
 
-		const sendMMType1 = async (
-			contacts: string[],
-			file?: Express.Multer.File
-		) => {
+		const sendMMType1 = async (contacts: string[], file?: Express.Multer.File) => {
 			try {
 				const contact = contacts[0];
 				const contactVars = await instance.getContactVars(contact);
@@ -333,16 +354,10 @@ class AppRouter {
 							fileName: fileName || file.originalname,
 							mimeType: file.mimetype,
 					  })
-					: await instance.sendText(
-							contact,
-							replaceVars(text, contactVars)
-					  );
+					: await instance.sendText(contact, replaceVars(text, contactVars));
 
 				await axios.post(
-					`${instance.requestURL.replace(
-						"/wwebjs",
-						""
-					)}/custom-routes/receive_mm/${
+					`${instance.requestURL.replace("/wwebjs", "")}/custom-routes/receive_mm/${
 						instance.whatsappNumber
 					}/${contact}`,
 					parsedMessage
@@ -361,10 +376,7 @@ class AppRouter {
 			}
 		};
 
-		const sendMMType2 = async (
-			contacts: string[],
-			file?: { name: string; buffer: Buffer; mimetype: string }
-		) => {
+		const sendMMType2 = async (contacts: string[], file?: { name: string; buffer: Buffer; mimetype: string }) => {
 			try {
 				const contact = contacts[0];
 				const contactVars = await instance.getContactVars(contact);
@@ -377,16 +389,10 @@ class AppRouter {
 							fileName: file.name,
 							mimeType: file.mimetype,
 					  })
-					: await instance.sendText(
-							contact,
-							replaceVars(text, contactVars)
-					  );
+					: await instance.sendText(contact, replaceVars(text, contactVars));
 
 				await axios.post(
-					`${instance.requestURL.replace(
-						"/wwebjs",
-						""
-					)}/custom-routes/receive_mm/${
+					`${instance.requestURL.replace("/wwebjs", "")}/custom-routes/receive_mm/${
 						instance.whatsappNumber
 					}/${contact}`,
 					parsedMessage
