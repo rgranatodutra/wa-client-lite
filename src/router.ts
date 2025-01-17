@@ -3,13 +3,15 @@ import multer from "multer";
 import instances from "./instances";
 import { decodeSafeURI, filesPath, isUUID, logWithDate } from "./utils";
 import * as mime from "mime";
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import axios from "axios";
 import { config } from "dotenv";
 import { loadContacts } from "./functions/loadContacts";
 import archiver from "archiver";
+import * as fs from "node:fs";
+
 config();
 
 class AppRouter {
@@ -196,38 +198,49 @@ class AppRouter {
 			const fileNames = req.body.files as string[];
 
 			const filesPath = process.env.FILES_DIRECTORY!;
+			const tempDir = join(filesPath, "/temp", Date.now().toString());
+
+
+			mkdirSync(tempDir, { recursive: true });
+			mkdirSync(join(tempDir, "arquivos"), { recursive: true });
+
+
 			const archive = archiver("zip", {
 				zlib: { level: 1 },
 			});
 
-			archive.on("close", () => logWithDate("Archive closed"));
-			archive.on("end", () => logWithDate("Archive end"));
-			archive.on("warning", (err) => logWithDate("Archive warning =>", err));
-			archive.on("error", (err) => logWithDate("Archive error =>", err));
+			writeFileSync(join(tempDir, pdfFile.originalname), pdfFile.buffer);
 
-			//append pdf + files to zip
-			archive.append(pdfFile.buffer, { name: pdfFile.originalname });
-
-			// search files on path 
-			const files = fileNames.map((fileName) => {
+			fileNames.forEach((fileName) => {
 				const searchFilePath = join(filesPath, "/media", fileName);
 				const file = readFileSync(searchFilePath);
 				const haveUUID = isUUID(fileName.split("_")[0]);
 				const fileNameWithoutUUID = haveUUID ? fileName.split("_").slice(1).join("_") : fileName;
 
-				return { file, fileNameWithoutUUID };
+				writeFileSync(join(tempDir, "arquivos", fileNameWithoutUUID), file);
 			});
 
-			files.forEach(({ file, fileNameWithoutUUID }) => {
-				archive.append(file, { name: fileNameWithoutUUID });
-			});
+			archive.directory(tempDir, false);
 
+			//finish the logic and retrieve the file to response
+			archive.finalize();
 			archive.pipe(res);
 
-			res.setHeader("Content-Disposition", `attachment; filename=files.zip`);
+			//set response headers
 			res.setHeader("Content-Type", "application/zip");
+			res.setHeader("Content-Disposition", `attachment; filename=${Date.now()}.zip`);
 
-			archive.finalize();
+			res.on("finish", () => {
+				setTimeout(() => {
+					fs.rm(tempDir, { recursive: true, force: true }, (err) => {
+						if (err) {
+							logWithDate("Error deleting temp dir", err);
+						}
+					});
+				}, 10000);
+			});
+
+
 		} catch (err) {
 			logWithDate("Get file failure =>", err);
 			res.status(500).json({ message: "Something went wrong" });
