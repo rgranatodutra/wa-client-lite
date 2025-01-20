@@ -209,24 +209,42 @@ class AppRouter {
 
 			writeFileSync(join(tempDir, pdfFile.originalname), pdfFile.buffer);
 
-			fileNames.forEach((fileName) => {
-				const searchFilePath = join(filesPath, "/media", fileName);
-				const file = readFileSync(searchFilePath);
-				const haveUUID = isUUID(fileName.split("_")[0]);
-				const fileNameWithoutUUID = haveUUID ? fileName.split("_").slice(1).join("_") : fileName;
+			let errorList: string[] = [];
 
-				writeFileSync(join(tempDir, "arquivos", fileNameWithoutUUID), file);
-			});
+			if (fileNames) {
+				fileNames.forEach((fileName) => {
+					try {
+						const searchFilePath = join(filesPath, "/media", fileName);
+						const file = readFileSync(searchFilePath);
+						writeFileSync(join(tempDir, "arquivos", fileName), file);
+					} catch (err) {
+						logWithDate(`Um arquivo não foi encontrado: ${fileName}`);
+						logWithDate("Mensagem de erro: ", err);
+
+						let errTxt = `O arquivo ${fileName} não foi encontrado.\nMensagem de erro: ${err}`;
+
+						errorList.push(errTxt);
+					}
+				});
+			}
+
+			if (errorList.length > 0) {
+				const errorTxtMessage = errorList.join("\n \n \n");
+
+				writeFileSync(join(tempDir, "Arquivos-não-encontrados.txt"), errorTxtMessage);
+			}
 
 			archive.directory(tempDir, false);
-
-			//finish the logic and retrieve the file to response
 			archive.finalize();
 			archive.pipe(res);
 
-			//set response headers
+			const currentDate = new Date();
+			const formattedDate = `${String(currentDate.getDate()).padStart(2, "0")}-${String(
+				currentDate.getMonth() + 1
+			).padStart(2, "0")}-${currentDate.getFullYear()}`;
+
 			res.setHeader("Content-Type", "application/zip");
-			res.setHeader("Content-Disposition", `attachment; filename=${Date.now()}.zip`);
+			res.setHeader("Content-Disposition", `attachment; filename=Mensagems_${formattedDate}.zip`);
 
 			res.on("finish", () => {
 				fs.rm(tempDir, { recursive: true, force: true }, (err) => {
