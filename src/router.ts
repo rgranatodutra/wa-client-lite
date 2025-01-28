@@ -33,9 +33,7 @@ class AppRouter {
 		this.router.get("/files/:filename", this.getFile);
 		this.router.post("/files", upload.single("file"), this.uploadFile);
 		this.router.post("/files/getFilesAsZip", upload.single("pdf"), this.getFilesAsZip);
-		this.router.post("/files/getFilesAsMultipleZip", upload.array("pdf"), () => {
-			console.log("hi");
-		});
+		this.router.post("/files/getFilesAsMultipleZip", upload.array("pdfs"), this.getFilesAsMultipleZip);
 	}
 
 	async loadMessages(req: Request, res: Response) {
@@ -264,37 +262,61 @@ class AppRouter {
 
 	async getFilesAsMultipleZip(req: Request, res: Response) {
 		try {
-			console.log("this has been called");
-			const pdfFile = req.files[0];
-			console.log(pdfFile);
+			const pdfFiles = req.files as Express.Multer.File[];
 			const fileNames = req.body.files as string[];
+			const contactIds = req.body.contactIds as string[];
+			const contactNames = req.body.contactNames as string[];
 
 			const filesPath = process.env.FILES_DIRECTORY!;
 			const tempDir = join(filesPath, "/temp", Date.now().toString());
-
-			mkdirSync(tempDir, { recursive: true });
-			mkdirSync(join(tempDir, "arquivos"), { recursive: true });
-
 			const archive = archiver("zip", {
 				zlib: { level: 1 },
 			});
 
-			writeFileSync(join(tempDir, pdfFile.originalname), pdfFile.buffer);
-
 			let errorList: string[] = [];
+
+			if (!pdfFiles || !contactIds || !contactNames) {
+				return res.status(400).json({ message: "Invalid request, lacking files, ids, or names" });
+			}
+
+			contactIds.forEach((contactId) => {
+				const pdfFile = pdfFiles.find((file) => file.originalname === `msgs_${contactId}.pdf`);
+				if (!pdfFile) {
+					errorList.push(`PDF de ${contactId} não encontrado`);
+					return;
+				}
+
+				const contactName = contactNames.find((name) => name.endsWith(`_${contactId}`))?.split("_")[0];
+				if (!contactName) {
+					errorList.push(`Nome do contato ${contactId} não encontrado`);
+					return;
+				}
+
+				const contactDir = join(tempDir, contactName);
+
+				mkdirSync(contactDir, { recursive: true });
+
+				writeFileSync(join(contactDir, "Mensagems.pdf"), pdfFile.buffer);
+			});
 
 			if (fileNames) {
 				fileNames.forEach((fileName) => {
 					try {
 						const searchFilePath = join(filesPath, "/media", fileName);
 						const file = readFileSync(searchFilePath);
-						writeFileSync(join(tempDir, "arquivos", fileName), file);
+						contactIds.forEach((contactId) => {
+							const contactName = contactNames.find((name) => name.endsWith(`_${contactId}`))?.split("_")[0];
+							if (contactName) {
+								const arquivosDir = join(tempDir, contactName, "arquivos");
+								mkdirSync(arquivosDir, { recursive: true });
+								writeFileSync(join(arquivosDir, fileName), file);
+							}
+						});
 					} catch (err) {
 						logWithDate(`Um arquivo não foi encontrado: ${fileName}`);
 						logWithDate("Mensagem de erro: ", err);
 
 						let errTxt = `O arquivo ${fileName} não foi encontrado.\nMensagem de erro: ${err}`;
-
 						errorList.push(errTxt);
 					}
 				});
@@ -302,8 +324,14 @@ class AppRouter {
 
 			if (errorList.length > 0) {
 				const errorTxtMessage = errorList.join("\n \n \n");
-
-				writeFileSync(join(tempDir, "Arquivos-não-encontrados.txt"), errorTxtMessage);
+				contactIds.forEach((contactId) => {
+					const contactName = contactNames.find((name) => name.endsWith(`_${contactId}`))?.split("_")[0];
+					if (contactName) {
+						const errorDir = join(tempDir, contactName, "mensagems de erro");
+						mkdirSync(errorDir, { recursive: true });
+						writeFileSync(join(errorDir, "Arquivos-não-encontrados.txt"), errorTxtMessage);
+					}
+				});
 			}
 
 			archive.directory(tempDir, false);
