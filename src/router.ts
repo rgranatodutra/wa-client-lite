@@ -262,10 +262,23 @@ class AppRouter {
 
 	async getFilesAsMultipleZip(req: Request, res: Response) {
 		try {
-			const pdfFiles = req.files as Express.Multer.File[];
-			const fileNames = req.body.files as string[];
-			const contactIds = req.body.contactIds as string[];
-			const contactNames = req.body.contactNames as string[];
+			let pdfFiles = req.files as Express.Multer.File[];
+			let fileNames = req.body.files as string[];
+			let contactIds = req.body.contactIds as string[];
+			let contactNames = req.body.contactNames as string[];
+
+			if (!Array.isArray(pdfFiles)) {
+				pdfFiles = [pdfFiles];
+			}
+			if (!Array.isArray(fileNames)) {
+				fileNames = [fileNames];
+			}
+			if (!Array.isArray(contactIds)) {
+				contactIds = [contactIds];
+			}
+			if (!Array.isArray(contactNames)) {
+				contactNames = [contactNames];
+			}
 
 			const filesPath = process.env.FILES_DIRECTORY!;
 			const tempDir = join(filesPath, "/temp", Date.now().toString());
@@ -299,7 +312,7 @@ class AppRouter {
 				writeFileSync(join(contactDir, "Mensagems.pdf"), pdfFile.buffer);
 			});
 
-			if (fileNames) {
+			if (fileNames && fileNames.length > 0 && fileNames[0] !== undefined && fileNames[0].trim() !== "") {
 				fileNames.forEach((fileName) => {
 					try {
 						const searchFilePath = join(filesPath, "/media", fileName);
