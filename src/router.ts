@@ -3,12 +3,14 @@ import multer from "multer";
 import instances from "./instances";
 import { decodeSafeURI, filesPath, isUUID, logWithDate } from "./utils";
 import * as mime from "mime";
-import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import axios from "axios";
 import { config } from "dotenv";
 import { loadContacts } from "./functions/loadContacts";
+import archiver from "archiver";
+import * as fs from "node:fs";
 
 config();
 
@@ -25,22 +27,13 @@ class AppRouter {
 		this.router.get("/clients/:from/load-avatars", this.loadAvatars);
 		this.router.get("/clients/:from/load-contacts", this.loadContacts);
 		this.router.get("/clients/:from/groups", this.loadGroups);
-		this.router.get(
-			"/clients/:from/validate-number/:to",
-			this.validateNumber
-		);
-		this.router.post(
-			"/clients/:from/messages/:to",
-			upload.single("file"),
-			this.sendMessage
-		);
-		this.router.post(
-			"/clients/:from/mass-messages",
-			upload.single("file"),
-			this.sendMassMessages
-		);
+		this.router.get("/clients/:from/validate-number/:to", this.validateNumber);
+		this.router.post("/clients/:from/messages/:to", upload.single("file"), this.sendMessage);
+		this.router.post("/clients/:from/mass-messages", upload.single("file"), this.sendMassMessages);
 		this.router.get("/files/:filename", this.getFile);
 		this.router.post("/files", upload.single("file"), this.uploadFile);
+		this.router.post("/files/getFilesAsZip", upload.single("pdf"), this.getFilesAsZip);
+		this.router.post("/files/getFilesAsMultipleZip", upload.array("pdfs"), this.getFilesAsMultipleZip);
 	}
 
 	async loadMessages(req: Request, res: Response) {
@@ -112,9 +105,7 @@ class AppRouter {
 			const instance = instances.find(from);
 
 			if (!instance) {
-				return res
-					.status(404)
-					.json({ message: "Whatsapp number isn't found " });
+				return res.status(404).json({ message: "Whatsapp number isn't found " });
 			}
 
 			const { text, referenceId, filename, isAudio } = req.body;
@@ -137,10 +128,7 @@ class AppRouter {
 				const localfile = readFileSync(filePath);
 				const mimeType = mime.getType(filePath);
 
-				const fileNameWithoutUUID = filename
-					.split("_")
-					.slice(1)
-					.join("_");
+				const fileNameWithoutUUID = filename.split("_").slice(1).join("_");
 
 				const sentMessageWithFile = await instance.sendFile({
 					file: localfile,
@@ -152,11 +140,7 @@ class AppRouter {
 
 				res.status(201).json(sentMessageWithFile);
 			} else {
-				const sentMessage = await instance.sendText(
-					to,
-					text,
-					referenceId
-				);
+				const sentMessage = await instance.sendText(to, text, referenceId);
 
 				res.status(201).json(sentMessage);
 			}
@@ -172,9 +156,7 @@ class AppRouter {
 			const instance = instances.find(from);
 
 			if (!instance) {
-				return res
-					.status(404)
-					.json({ message: "Whatsapp number isn't found " });
+				return res.status(404).json({ message: "Whatsapp number isn't found " });
 			}
 
 			const pfpURL = await instance.getProfilePicture(to);
@@ -197,23 +179,194 @@ class AppRouter {
 			const mimeType = mime.getType(searchFilePath);
 			const file = readFileSync(searchFilePath);
 			const haveUUID = isUUID(fileName.split("_")[0]);
-			const fileNameWithoutUUID = haveUUID
-				? fileName.split("_").slice(1).join("_")
-				: fileName;
+			const fileNameWithoutUUID = haveUUID ? fileName.split("_").slice(1).join("_") : fileName;
 
-			const sanitizedFileName = fileNameWithoutUUID.replace(/[^a-zA-Z0-9-_ ]/g, "");
-
-			res.setHeader(
-				"Content-Disposition",
-				`inline; filename="${sanitizedFileName}"`
-			);
-
+			res.setHeader("Content-Disposition", `inline; filename="${fileNameWithoutUUID}"`);
 			mimeType && res.setHeader("Content-Type", mimeType);
 			res.end(file);
 
 			logWithDate("Get file success =>", fileName);
 		} catch (err) {
 			// Log and send error response
+			logWithDate("Get file failure =>", err);
+			res.status(500).json({ message: "Something went wrong" });
+		}
+	}
+
+	async getFilesAsZip(req: Request, res: Response) {
+		try {
+			const pdfFile = req.file;
+			const fileNames = req.body.files as string[];
+
+			const filesPath = process.env.FILES_DIRECTORY!;
+			const tempDir = join(filesPath, "/temp", Date.now().toString());
+
+			mkdirSync(tempDir, { recursive: true });
+			mkdirSync(join(tempDir, "arquivos"), { recursive: true });
+
+			const archive = archiver("zip", {
+				zlib: { level: 1 },
+			});
+
+			writeFileSync(join(tempDir, pdfFile.originalname), pdfFile.buffer);
+
+			let errorList: string[] = [];
+
+			if (fileNames) {
+				fileNames.forEach((fileName) => {
+					try {
+						const searchFilePath = join(filesPath, "/media", fileName);
+						const file = readFileSync(searchFilePath);
+						writeFileSync(join(tempDir, "arquivos", fileName), file);
+					} catch (err) {
+						logWithDate(`Um arquivo não foi encontrado: ${fileName}`);
+						logWithDate("Mensagem de erro: ", err);
+
+						let errTxt = `O arquivo ${fileName} não foi encontrado.\nMensagem de erro: ${err}`;
+
+						errorList.push(errTxt);
+					}
+				});
+			}
+
+			if (errorList.length > 0) {
+				const errorTxtMessage = errorList.join("\n \n \n");
+
+				writeFileSync(join(tempDir, "Arquivos-não-encontrados.txt"), errorTxtMessage);
+			}
+
+			archive.directory(tempDir, false);
+			archive.finalize();
+			archive.pipe(res);
+
+			const currentDate = new Date();
+			const formattedDate = `${String(currentDate.getDate()).padStart(2, "0")}-${String(
+				currentDate.getMonth() + 1
+			).padStart(2, "0")}-${currentDate.getFullYear()}`;
+
+			res.setHeader("Content-Type", "application/zip");
+			res.setHeader("Content-Disposition", `attachment; filename=Mensagems_${formattedDate}.zip`);
+
+			res.on("finish", () => {
+				fs.rm(tempDir, { recursive: true, force: true }, (err) => {
+					if (err) {
+						logWithDate("Error deleting temp dir", err);
+					}
+				});
+			});
+		} catch (err) {
+			logWithDate("Get file failure =>", err);
+			res.status(500).json({ message: "Something went wrong" });
+		}
+	}
+
+	async getFilesAsMultipleZip(req: Request, res: Response) {
+		try {
+			let pdfFiles = req.files as Express.Multer.File[];
+			let fileNames = req.body.files as string[];
+			let contactIds = req.body.contactIds as string[];
+			let contactNames = req.body.contactNames as string[];
+
+			if (!Array.isArray(pdfFiles)) {
+				pdfFiles = [pdfFiles];
+			}
+			if (!Array.isArray(fileNames)) {
+				fileNames = [fileNames];
+			}
+			if (!Array.isArray(contactIds)) {
+				contactIds = [contactIds];
+			}
+			if (!Array.isArray(contactNames)) {
+				contactNames = [contactNames];
+			}
+
+			const filesPath = process.env.FILES_DIRECTORY!;
+			const tempDir = join(filesPath, "/temp", Date.now().toString());
+			const archive = archiver("zip", {
+				zlib: { level: 1 },
+			});
+
+			let errorList: string[] = [];
+
+			if (!pdfFiles || !contactIds || !contactNames) {
+				return res.status(400).json({ message: "Invalid request, lacking files, ids, or names" });
+			}
+
+			contactIds.forEach((contactId) => {
+				const pdfFile = pdfFiles.find((file) => file.originalname === `msgs_${contactId}.pdf`);
+				if (!pdfFile) {
+					errorList.push(`PDF de ${contactId} não encontrado`);
+					return;
+				}
+
+				const contactName = contactNames.find((name) => name.endsWith(`_${contactId}`))?.split("_")[0];
+				if (!contactName) {
+					errorList.push(`Nome do contato ${contactId} não encontrado`);
+					return;
+				}
+
+				const contactDir = join(tempDir, contactName);
+
+				mkdirSync(contactDir, { recursive: true });
+
+				writeFileSync(join(contactDir, "Mensagems.pdf"), pdfFile.buffer);
+			});
+
+			if (fileNames && fileNames.length > 0 && fileNames[0] !== undefined && fileNames[0].trim() !== "") {
+				fileNames.forEach((fileName) => {
+					try {
+						const searchFilePath = join(filesPath, "/media", fileName);
+						const file = readFileSync(searchFilePath);
+						contactIds.forEach((contactId) => {
+							const contactName = contactNames.find((name) => name.endsWith(`_${contactId}`))?.split("_")[0];
+							if (contactName) {
+								const arquivosDir = join(tempDir, contactName, "arquivos");
+								mkdirSync(arquivosDir, { recursive: true });
+								writeFileSync(join(arquivosDir, fileName), file);
+							}
+						});
+					} catch (err) {
+						logWithDate(`Um arquivo não foi encontrado: ${fileName}`);
+						logWithDate("Mensagem de erro: ", err);
+
+						let errTxt = `O arquivo ${fileName} não foi encontrado.\nMensagem de erro: ${err}`;
+						errorList.push(errTxt);
+					}
+				});
+			}
+
+			if (errorList.length > 0) {
+				const errorTxtMessage = errorList.join("\n \n \n");
+				contactIds.forEach((contactId) => {
+					const contactName = contactNames.find((name) => name.endsWith(`_${contactId}`))?.split("_")[0];
+					if (contactName) {
+						const errorDir = join(tempDir, contactName, "mensagems de erro");
+						mkdirSync(errorDir, { recursive: true });
+						writeFileSync(join(errorDir, "Arquivos-não-encontrados.txt"), errorTxtMessage);
+					}
+				});
+			}
+
+			archive.directory(tempDir, false);
+			archive.finalize();
+			archive.pipe(res);
+
+			const currentDate = new Date();
+			const formattedDate = `${String(currentDate.getDate()).padStart(2, "0")}-${String(
+				currentDate.getMonth() + 1
+			).padStart(2, "0")}-${currentDate.getFullYear()}`;
+
+			res.setHeader("Content-Type", "application/zip");
+			res.setHeader("Content-Disposition", `attachment; filename=Mensagems_${formattedDate}.zip`);
+
+			res.on("finish", () => {
+				fs.rm(tempDir, { recursive: true, force: true }, (err) => {
+					if (err) {
+						logWithDate("Error deleting temp dir", err);
+					}
+				});
+			});
+		} catch (err) {
 			logWithDate("Get file failure =>", err);
 			res.status(500).json({ message: "Something went wrong" });
 		}
@@ -228,9 +381,7 @@ class AppRouter {
 			const clientsStatus = [];
 
 			for (const instance of instances.instances) {
-				const status = await instance.client
-					.getState()
-					.catch(() => undefined);
+				const status = await instance.client.getState().catch(() => undefined);
 				const instanceData = {
 					client: instance.clientName,
 					number: instance.whatsappNumber,
@@ -258,9 +409,7 @@ class AppRouter {
 			}
 
 			const uuid = randomUUID();
-			const filename = decodeURIComponent(req.file.originalname).split(
-				"."
-			)[0];
+			const filename = decodeURIComponent(req.file.originalname).split(".")[0];
 			const ext = decodeURIComponent(req.file.originalname).split(".")[1];
 			const generatedName = `${uuid}_${filename}.${ext}`;
 
@@ -300,28 +449,16 @@ class AppRouter {
 				contato_nome_completo: string;
 			}
 		) => {
-			message = message.replaceAll(
-				`@saudação_tempo`,
-				vars.saudação_tempo
-			);
+			message = message.replaceAll(`@saudação_tempo`, vars.saudação_tempo);
 			message = message.replaceAll(`@cliente_razao`, vars.cliente_razao);
 			message = message.replaceAll(`@cliente_cnpj`, vars.cliente_cnpj);
-			message = message.replaceAll(
-				`@contato_primeiro_nome`,
-				vars.contato_primeiro_nome
-			);
-			message = message.replaceAll(
-				`@contato_nome_completo`,
-				vars.contato_nome_completo
-			);
+			message = message.replaceAll(`@contato_primeiro_nome`, vars.contato_primeiro_nome);
+			message = message.replaceAll(`@contato_nome_completo`, vars.contato_nome_completo);
 
 			return message;
 		};
 
-		const sendMMType1 = async (
-			contacts: string[],
-			file?: Express.Multer.File
-		) => {
+		const sendMMType1 = async (contacts: string[], file?: Express.Multer.File) => {
 			try {
 				const contact = contacts[0];
 				const contactVars = await instance.getContactVars(contact);
@@ -330,22 +467,17 @@ class AppRouter {
 
 				const parsedMessage = file
 					? await instance.sendFile({
-						caption: replaceVars(text, contactVars),
-						contact,
-						file: file.buffer,
-						fileName: fileName || file.originalname,
-						mimeType: file.mimetype,
-					})
-					: await instance.sendText(
-						contact,
-						replaceVars(text, contactVars)
-					);
+							caption: replaceVars(text, contactVars),
+							contact,
+							file: file.buffer,
+							fileName: fileName || file.originalname,
+							mimeType: file.mimetype,
+					  })
+					: await instance.sendText(contact, replaceVars(text, contactVars));
 
 				await axios.post(
-					`${instance.requestURL.replace(
-						"/wwebjs",
-						""
-					)}/custom-routes/receive_mm/${instance.whatsappNumber
+					`${instance.requestURL.replace("/wwebjs", "")}/custom-routes/receive_mm/${
+						instance.whatsappNumber
 					}/${contact}`,
 					parsedMessage
 				);
@@ -363,32 +495,24 @@ class AppRouter {
 			}
 		};
 
-		const sendMMType2 = async (
-			contacts: string[],
-			file?: { name: string; buffer: Buffer; mimetype: string }
-		) => {
+		const sendMMType2 = async (contacts: string[], file?: { name: string; buffer: Buffer; mimetype: string }) => {
 			try {
 				const contact = contacts[0];
 				const contactVars = await instance.getContactVars(contact);
 
 				const parsedMessage = file
 					? await instance.sendFile({
-						caption: replaceVars(text, contactVars),
-						contact,
-						file: file.buffer,
-						fileName: file.name,
-						mimeType: file.mimetype,
-					})
-					: await instance.sendText(
-						contact,
-						replaceVars(text, contactVars)
-					);
+							caption: replaceVars(text, contactVars),
+							contact,
+							file: file.buffer,
+							fileName: file.name,
+							mimeType: file.mimetype,
+					  })
+					: await instance.sendText(contact, replaceVars(text, contactVars));
 
 				await axios.post(
-					`${instance.requestURL.replace(
-						"/wwebjs",
-						""
-					)}/custom-routes/receive_mm/${instance.whatsappNumber
+					`${instance.requestURL.replace("/wwebjs", "")}/custom-routes/receive_mm/${
+						instance.whatsappNumber
 					}/${contact}`,
 					parsedMessage
 				);
