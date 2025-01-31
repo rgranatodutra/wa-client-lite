@@ -202,7 +202,6 @@ class AppRouter {
 			const tempDir = join(filesPath, "/temp", Date.now().toString());
 
 			mkdirSync(tempDir, { recursive: true });
-			mkdirSync(join(tempDir, "arquivos"), { recursive: true });
 
 			const archive = archiver("zip", {
 				zlib: { level: 1 },
@@ -212,18 +211,20 @@ class AppRouter {
 
 			let errorList: string[] = [];
 
-			if (fileNames) {
+			if (fileNames && fileNames.length > 0) {
+				const arquivosDir = join(tempDir, "arquivos");
+				mkdirSync(arquivosDir, { recursive: true });
+
 				fileNames.forEach((fileName) => {
 					try {
 						const searchFilePath = join(filesPath, "/media", fileName);
 						const file = readFileSync(searchFilePath);
-						writeFileSync(join(tempDir, "arquivos", fileName), file);
+						writeFileSync(join(arquivosDir, fileName), file);
 					} catch (err) {
 						logWithDate(`Um arquivo não foi encontrado: ${fileName}`);
 						logWithDate("Mensagem de erro: ", err);
 
 						let errTxt = `O arquivo ${fileName} não foi encontrado.\nMensagem de erro: ${err}`;
-
 						errorList.push(errTxt);
 					}
 				});
