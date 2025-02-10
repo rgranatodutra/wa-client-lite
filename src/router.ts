@@ -32,7 +32,8 @@ class AppRouter {
 		this.router.post("/clients/:from/mass-messages", upload.single("file"), this.sendMassMessages);
 		this.router.get("/files/:filename", this.getFile);
 		this.router.post("/files", upload.single("file"), this.uploadFile);
-		this.router.post("/files/getMultipleFiles", upload.single("pdf"), this.getMultipleFiles);
+		this.router.post("/files/getFilesAsZip", upload.single("pdf"), this.getFilesAsZip);
+		this.router.post("/files/getFilesAsMultipleZip", upload.array("pdfs"), this.getFilesAsMultipleZip);
 	}
 
 	async loadMessages(req: Request, res: Response) {
@@ -192,7 +193,7 @@ class AppRouter {
 		}
 	}
 
-	async getMultipleFiles(req: Request, res: Response) {
+	async getFilesAsZip(req: Request, res: Response) {
 		try {
 			const pdfFile = req.file;
 			const fileNames = req.body.files as string[];
@@ -201,7 +202,6 @@ class AppRouter {
 			const tempDir = join(filesPath, "/temp", Date.now().toString());
 
 			mkdirSync(tempDir, { recursive: true });
-			mkdirSync(join(tempDir, "arquivos"), { recursive: true });
 
 			const archive = archiver("zip", {
 				zlib: { level: 1 },
@@ -211,18 +211,20 @@ class AppRouter {
 
 			let errorList: string[] = [];
 
-			if (fileNames) {
+			if (fileNames && fileNames.length > 0) {
+				const arquivosDir = join(tempDir, "arquivos");
+				mkdirSync(arquivosDir, { recursive: true });
+
 				fileNames.forEach((fileName) => {
 					try {
 						const searchFilePath = join(filesPath, "/media", fileName);
 						const file = readFileSync(searchFilePath);
-						writeFileSync(join(tempDir, "arquivos", fileName), file);
+						writeFileSync(join(arquivosDir, fileName), file);
 					} catch (err) {
 						logWithDate(`Um arquivo não foi encontrado: ${fileName}`);
 						logWithDate("Mensagem de erro: ", err);
 
 						let errTxt = `O arquivo ${fileName} não foi encontrado.\nMensagem de erro: ${err}`;
-
 						errorList.push(errTxt);
 					}
 				});
@@ -232,6 +234,118 @@ class AppRouter {
 				const errorTxtMessage = errorList.join("\n \n \n");
 
 				writeFileSync(join(tempDir, "Arquivos-não-encontrados.txt"), errorTxtMessage);
+			}
+
+			archive.directory(tempDir, false);
+			archive.finalize();
+			archive.pipe(res);
+
+			const currentDate = new Date();
+			const formattedDate = `${String(currentDate.getDate()).padStart(2, "0")}-${String(
+				currentDate.getMonth() + 1
+			).padStart(2, "0")}-${currentDate.getFullYear()}`;
+
+			res.setHeader("Content-Type", "application/zip");
+			res.setHeader("Content-Disposition", `attachment; filename=Mensagems_${formattedDate}.zip`);
+
+			res.on("finish", () => {
+				fs.rm(tempDir, { recursive: true, force: true }, (err) => {
+					if (err) {
+						logWithDate("Error deleting temp dir", err);
+					}
+				});
+			});
+		} catch (err) {
+			logWithDate("Get file failure =>", err);
+			res.status(500).json({ message: "Something went wrong" });
+		}
+	}
+
+	async getFilesAsMultipleZip(req: Request, res: Response) {
+		try {
+			let pdfFiles = req.files as Express.Multer.File[];
+			let fileNames = req.body.files as string[];
+			let contactIds = req.body.contactIds as string[];
+			let contactNames = req.body.contactNames as string[];
+
+			if (!Array.isArray(pdfFiles)) {
+				pdfFiles = [pdfFiles];
+			}
+			if (!Array.isArray(fileNames)) {
+				fileNames = [fileNames];
+			}
+			if (!Array.isArray(contactIds)) {
+				contactIds = [contactIds];
+			}
+			if (!Array.isArray(contactNames)) {
+				contactNames = [contactNames];
+			}
+
+			const filesPath = process.env.FILES_DIRECTORY!;
+			const tempDir = join(filesPath, "/temp", Date.now().toString());
+			const archive = archiver("zip", {
+				zlib: { level: 1 },
+			});
+
+			let errorList: string[] = [];
+
+			if (!pdfFiles || !contactIds || !contactNames) {
+				return res.status(400).json({ message: "Invalid request, lacking files, ids, or names" });
+			}
+
+			contactIds.forEach((contactId) => {
+				const pdfFile = pdfFiles.find((file) => file.originalname === `msgs_${contactId}.pdf`);
+				if (!pdfFile) {
+					errorList.push(`PDF de ${contactId} não encontrado`);
+					return;
+				}
+
+				const contactName = contactNames.find((name) => name.endsWith(`_${contactId}`))?.split("_")[0];
+				if (!contactName) {
+					errorList.push(`Nome do contato ${contactId} não encontrado`);
+					return;
+				}
+
+				const contactDir = join(tempDir, contactName);
+
+				mkdirSync(contactDir, { recursive: true });
+
+				writeFileSync(join(contactDir, "Mensagems.pdf"), pdfFile.buffer);
+			});
+
+			if (fileNames && fileNames.length > 0 && fileNames[0] !== undefined && fileNames[0].trim() !== "") {
+				fileNames.forEach((fileName) => {
+					try {
+						const searchFilePath = join(filesPath, "/media", fileName);
+						const file = readFileSync(searchFilePath);
+						contactIds.forEach((contactId) => {
+							const contactName = contactNames.find((name) => name.endsWith(`_${contactId}`))?.split("_")[0];
+							if (contactName) {
+								const arquivosDir = join(tempDir, contactName, "arquivos");
+								mkdirSync(arquivosDir, { recursive: true });
+								writeFileSync(join(arquivosDir, fileName), file);
+							}
+						});
+					} catch (err) {
+						logWithDate(`Um arquivo não foi encontrado: ${fileName}`);
+						logWithDate("Mensagem de erro: ", err);
+
+						let errTxt = `O arquivo ${fileName} não foi encontrado.\nMensagem de erro: ${err}`;
+						errorList.push(errTxt);
+					}
+				});
+			}
+
+			if (errorList.length > 0) {
+				const errorTxtMessage = errorList.join("\n \n \n");
+				contactIds.forEach((contactId) => {
+					const contactName = contactNames.find((name) => name.endsWith(`_${contactId}`))?.split("_")[0];
+					if (contactName) {
+						const errorDir = join(tempDir, contactName, "mensagems de erro");
+						mkdirSync(errorDir, { recursive: true });
+						writeFileSync(join(errorDir, "Arquivos-não-encontrados.txt"), errorTxtMessage);
+					}
+				});
 			}
 
 			archive.directory(tempDir, false);
